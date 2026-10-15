@@ -1,0 +1,21 @@
+CHOCOLAT BACKOFFICE — DÉMARRAGE RAPIDE (mode web)
+=================================================
+
+Prérequis : Node.js 22 ou plus récent (https://nodejs.org).
+
+1. Décompressez le dossier, ouvrez un terminal dedans, puis :
+     npm install
+2. Copiez .env.example en .env et adaptez-le si besoin
+   (au minimum AUTH_BOOTSTRAP_ADMIN_LOGIN / AUTH_BOOTSTRAP_ADMIN_PASSWORD, 12 caractères minimum).
+3. Lancez :
+     npm run web
+   (après une modification du code : npm run web:build)
+4. Ouvrez l'adresse affichée dans le terminal, par défaut http://localhost:3001
+
+Partage sur le réseau local : dans .env, CHOCOLAT_HOST=0.0.0.0 et soit un certificat
+HTTPS (scripts/generate-tls-cert.sh <votre-ip>), soit CHOCOLAT_ALLOW_INSECURE_LAN=1
+sur un réseau de confiance. Détails dans README.txt, section « Mode application web ».
+
+La base de données est vide au premier lancement : importez les données source
+depuis « Données source ». Les fichiers secrets (clé Google, certificats) ne sont
+pas inclus : demandez-les séparément si nécessaire.

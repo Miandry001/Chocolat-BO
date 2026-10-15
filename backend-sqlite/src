@@ -1,0 +1,100 @@
+import express from "express";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import { errorHandler, notFound } from "./middlewares/errorHandler.js";
+import { buildRouter } from "./routes/index.js";
+import { createAuthService } from "./services/authService.js";
+
+export function createApp(repos, { bodyLimit = process.env.JSON_BODY_LIMIT ?? "256kb", rateMax = 300, authSecret } = {}) {
+  const app = express();
+  const localSecret = process.env.NODE_ENV === "production" ? undefined : "local-dev-only-chocolat-jwt-secret-change-before-deploy";
+  const authService = createAuthService(repos, { secret: authSecret ?? process.env.JWT_SECRET ?? localSecret });
+  app.locals.authService = authService;
+  app.use(helmet());
+  app.use(rateLimit({ windowMs: 60_000, limit: rateMax, standardHeaders: true, legacyHeaders: false }));
+  app.use("/api/v1/auth/login", rateLimit({ windowMs: 15 * 60_000, limit: 10, standardHeaders: true, legacyHeaders: false }));
+  app.use(express.json({ limit: bodyLimit }));
+  app.use("/api/v1", buildRouter(repos, authService));
+  app.use(notFound);
+  app.use(errorHandler);
+  return app;
+}
+import mongoose from "mongoose";
+import { createApp } from "./app.js";
+import { createMongoRepos } from "./repositories/mongoRepos.js";
+import { logger } from "./utils/logger.js";
+import { hashPassword, verifyPassword } from "./services/authService.js";
+import { User } from "./models/index.js";
+import { removeUniqueUserLoginIndexes } from "./migrations/userIndexes.js";
+
+try { process.loadEnvFile(); } catch { /* pas de .env : variables d'environnement du système */ }
+const { MONGODB_URI, PORT = 3001 } = process.env;
+if (!MONGODB_URI) { logger.error("MONGODB_URI manquant (voir .env.example)"); process.exit(1); }
+if (!process.env.JWT_SECRET || Buffer.byteLength(process.env.JWT_SECRET) < 32) {
+  logger.error("JWT_SECRET manquant ou trop court (32 octets minimum)"); process.exit(1);
+}
+if (process.env.NODE_ENV === "production") {
+  try {
+    const origin = new URL(process.env.APP_ORIGIN ?? "");
+    if (origin.protocol !== "https:" || origin.origin !== process.env.APP_ORIGIN) throw new Error("Invalid APP_ORIGIN");
+  } catch {
+    logger.error("APP_ORIGIN doit être l'origine HTTPS publique exacte de l'application"); process.exit(1);
+  }
+}
+
+try {
+  await mongoose.connect(MONGODB_URI);
+} catch (error) {
+  const serverErrors = [...(error?.reason?.servers?.values?.() ?? [])]
+    .map((server) => server.error)
+    .filter(Boolean);
+  const tlsError = serverErrors.find((serverError) => String(serverError.code ?? "").startsWith("ERR_SSL_"));
+  logger.error("mongodb_connection_failed", {
+    errorType: error?.name ?? "Error",
+    cause: tlsError ? "tls_handshake_failed" : "server_selection_failed",
+    errorCode: tlsError?.code,
+    guidance: tlsError
+      ? "Vérifiez le réseau, le proxy/inspection TLS et l'accès TLS à MongoDB Atlas."
+      : "Vérifiez l'URI, les identifiants, le réseau et la liste d'accès IP MongoDB Atlas.",
+  });
+  process.exit(1);
+}
+const removedUserIndexes = await removeUniqueUserLoginIndexes(User.collection);
+if (removedUserIndexes.length) {
+  logger.info("legacy_user_login_unique_indexes_removed", { count: removedUserIndexes.length });
+}
+await Promise.all([mongoose.model("User").init(), mongoose.model("ActiveSession").init()]);
+const repos = createMongoRepos();
+const bootstrapLogin = process.env.AUTH_BOOTSTRAP_ADMIN_LOGIN?.trim().toLowerCase();
+const bootstrapPassword = process.env.AUTH_BOOTSTRAP_ADMIN_PASSWORD;
+if (Boolean(bootstrapLogin) !== Boolean(bootstrapPassword)) {
+  logger.error("AUTH_BOOTSTRAP_ADMIN_LOGIN et AUTH_BOOTSTRAP_ADMIN_PASSWORD doivent être configurés ensemble"); process.exit(1);
+}
+if (!bootstrapLogin || !bootstrapPassword || bootstrapPassword.length < 12) {
+  logger.error("Configurez le compte admin initial avec un mot de passe de 12 caractères minimum"); process.exit(1);
+}
+if (bootstrapLogin) {
+  const sameLogin = await repos.users.findByLoginCandidates(bootstrapLogin);
+  if (!sameLogin.some((user) => user.role === "ADMIN")) {
+    const sameName = await repos.users.findByName("Admin", "Principal");
+    for (const candidate of [...sameLogin, ...sameName]) {
+      if (await verifyPassword(bootstrapPassword, candidate.passwordHash)) {
+        logger.error("bootstrap_admin_credentials_conflict");
+        process.exit(1);
+      }
+    }
+    const admin = { login: bootstrapLogin, firstName: "Admin", lastName: "Principal", fullName: "Admin Principal", role: "ADMIN", passwordHash: await hashPassword(bootstrapPassword), active: true };
+    await repos.users.create(admin);
+    logger.info("bootstrap_admin_created");
+  }
+}
+// Servir les fichiers statiques depuis chocolat/frontend/dist
+app.use(express.static(path.join(__dirname, 'frontend/dist')));
+
+// Rediriger toutes les routes vers l'index.html de React
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'frontend/dist/index.html'));
+});
+
+createApp(repos).listen(PORT, () => logger.info("api_started", { port: Number(PORT) }));
+

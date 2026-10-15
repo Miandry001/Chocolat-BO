@@ -1,0 +1,23 @@
+:root {
+  color-scheme: light;
+  --ground: #FFFFFF;
+  --surface: #FFFFFF;
+  --surface-2: #FFFFFF;
+  --line: #E3DDD8;
+  --line-strong: #CFC6BF;
+  --ink: #2A1E19;
+  --ink-2: #5E504A;
+  --muted: #8A7C75;
+  --cacao: #6E3B27;
+  --cacao-ink: #FFFFFF;
+  --focus: #2F7A68;
+  --danger: #B42318;
+  --navy: #10294A;
+  --row-alt: #E8F0F9;
+  --row-line: #BDD3EE;
+
+  --font-body: "ui-sans-serif", system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+}
